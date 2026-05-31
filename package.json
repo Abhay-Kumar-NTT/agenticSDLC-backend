@@ -1,0 +1,41 @@
+{
+  "name": "agenticsdlc-backend",
+  "version": "1.0.0",
+  "description": "Backend API for AgenticSDLC Workflow Designer",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "setup-db": "node setup-database.cjs",
+    "test-db": "node test-db-simple.cjs"
+  },
+  "keywords": [
+    "workflow",
+    "orchestration",
+    "api",
+    "rest",
+    "express",
+    "postgresql"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/agenticSDLC-backend"
+  },
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "pg": "^8.21.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  }
+}
