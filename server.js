@@ -9,6 +9,7 @@ import cors from 'cors';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
 import workflowRoutes from './routes/workflow.routes.js';
+import repositoryRoutes from './routes/repository.routes.js';
 import { environment } from './config/database.config.js';
 
 // Load environment variables
@@ -42,6 +43,7 @@ app.get('/health', (req, res) => {
 
 // API routes
 app.use('/api/workflows', workflowRoutes);
+app.use('/api/repositories', repositoryRoutes);
 
 // 404 handler
 app.use((req, res) => {
