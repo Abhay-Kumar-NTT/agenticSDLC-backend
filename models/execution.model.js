@@ -6,8 +6,47 @@
  * human-in-loop nodes pause execution until approved via API.
  */
 
+import https from 'https';
 import { query, getClient } from '../db/connection.js';
 import { WorkflowModel } from './workflow.model.js';
+
+// Works on Node 16+ (no dependency on global fetch)
+function httpsRequest(url, options = {}, body = null) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const reqOptions = {
+      hostname: parsed.hostname,
+      path: parsed.pathname + parsed.search,
+      method: options.method || 'GET',
+      headers: options.headers || {},
+      rejectUnauthorized: false, // corporate proxy uses self-signed cert
+    };
+    const req = https.request(reqOptions, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        const body = data;
+        resolve({
+          status: res.statusCode,
+          ok: res.statusCode >= 200 && res.statusCode < 300,
+          json: () => Promise.resolve(body ? JSON.parse(body) : {}),
+          text: () => Promise.resolve(body),
+        });
+      });
+      res.on('error', reject);
+    });
+    // 15 second timeout
+    req.setTimeout(15000, () => {
+      req.destroy(new Error('Request timed out after 15s'));
+    });
+    req.on('error', (err) => {
+      console.error(`[httpsRequest] Error for ${options.method || 'GET'} ${url}: ${err.message}`);
+      reject(err);
+    });
+    if (body) req.write(body);
+    req.end();
+  });
+}
 
 // Ensure tables exist on first use (idempotent)
 async function ensureSchema() {
@@ -37,9 +76,11 @@ async function ensureSchema() {
 }
 
 const GITHUB_API_BASE = 'https://api.github.com';
-const GITHUB_TOKEN   = process.env.GITHUB_TOKEN  || process.env.VITE_GITHUB_TOKEN  || '';
-const GITHUB_OWNER   = process.env.GITHUB_OWNER  || process.env.VITE_GITHUB_OWNER  || '';
-const GITHUB_REPO    = process.env.GITHUB_REPO   || process.env.VITE_GITHUB_REPO   || '';
+
+// Read lazily at call-time — constants evaluated at import time miss dotenv
+function ghToken() { return process.env.GITHUB_TOKEN || ''; }
+function ghOwner() { return process.env.GITHUB_OWNER || ''; }
+function ghRepo()  { return process.env.GITHUB_REPO  || ''; }
 
 // Map canvas node types → GitHub workflow files + input key from node config
 const NODE_WORKFLOW_MAP = {
@@ -72,32 +113,37 @@ const NODE_WORKFLOW_MAP = {
 // ---------- GitHub helpers ----------
 
 async function githubDispatch(workflowFile, inputs = {}) {
-  const url = `${GITHUB_API_BASE}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${workflowFile}/dispatches`;
-  const res = await fetch(url, {
+  const url = `${GITHUB_API_BASE}/repos/${ghOwner()}/${ghRepo()}/actions/workflows/${workflowFile}/dispatches`;
+  const body = JSON.stringify({ ref: 'main', inputs });
+  console.log(`[GitHub] Dispatching ${workflowFile} | Owner: ${ghOwner()} | Repo: ${ghRepo()} | Token: ${ghToken() ? 'present' : 'MISSING'}`);
+  console.log(`[GitHub] Inputs being sent: ${body}`);
+  const res = await httpsRequest(url, {
     method: 'POST',
     headers: {
       'Accept': 'application/vnd.github+json',
-      'Authorization': `Bearer ${GITHUB_TOKEN}`,
+      'Authorization': `Bearer ${ghToken()}`,
       'X-GitHub-Api-Version': '2022-11-28',
       'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(body),
+      'User-Agent': 'agenticSDLC-backend/1.0',
     },
-    body: JSON.stringify({ ref: 'main', inputs }),
-  });
-  if (!res.ok && res.status !== 204) {
-    const err = await res.json().catch(() => ({ message: res.statusText }));
-    throw new Error(err.message || `GitHub dispatch failed: ${res.status}`);
+  }, body);
+  const responseText = await res.text();
+  console.log(`[GitHub] Dispatch response: ${res.status} | Body: ${responseText || '(empty)'}`);
+  if (res.status !== 204 && !res.ok) {
+    throw new Error(responseText || `GitHub dispatch failed: ${res.status}`);
   }
 }
 
 async function getLatestGitHubRunId(workflowFile) {
-  // Wait a few seconds for GitHub to register the run before fetching
   await new Promise(r => setTimeout(r, 4000));
-  const url = `${GITHUB_API_BASE}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${workflowFile}/runs?per_page=1`;
-  const res = await fetch(url, {
+  const url = `${GITHUB_API_BASE}/repos/${ghOwner()}/${ghRepo()}/actions/workflows/${workflowFile}/runs?per_page=1`;
+  const res = await httpsRequest(url, {
     headers: {
       'Accept': 'application/vnd.github+json',
-      'Authorization': `Bearer ${GITHUB_TOKEN}`,
+      'Authorization': `Bearer ${ghToken()}`,
       'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'agenticSDLC-backend/1.0',
     },
   });
   if (!res.ok) return null;
@@ -109,11 +155,11 @@ async function pollGitHubRunUntilDone(runId, timeoutMs = 30 * 60 * 1000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     await new Promise(r => setTimeout(r, 15000));
-    const url = `${GITHUB_API_BASE}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${runId}`;
-    const res = await fetch(url, {
+    const url = `${GITHUB_API_BASE}/repos/${ghOwner()}/${ghRepo()}/actions/runs/${runId}`;
+    const res = await httpsRequest(url, {
       headers: {
         'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${GITHUB_TOKEN}`,
+        'Authorization': `Bearer ${ghToken()}`,
         'X-GitHub-Api-Version': '2022-11-28',
       },
     });
@@ -316,6 +362,7 @@ export class ExecutionModel {
           return;
         }
       } catch (err) {
+        console.error(`[_drive] Node "${node.label}" (${node.type}) failed: ${err.message}`);
         await updateNodeExecution(executionId, node.id, {
           status: 'failed',
           completed_at: new Date(),

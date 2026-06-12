@@ -4,17 +4,17 @@
  * Main Express server for handling workflow API requests
  */
 
+// Load env FIRST — must be before any other import that reads process.env
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
-import dotenv from 'dotenv';
 import workflowRoutes from './routes/workflow.routes.js';
 import repositoryRoutes from './routes/repository.routes.js';
 import executionRoutes from './routes/execution.routes.js';
 import { environment } from './config/database.config.js';
-
-// Load environment variables
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
